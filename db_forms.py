@@ -1,6 +1,5 @@
 # db_forms.py
-import sqlite3
-import os
+import sqlite3, os
 from datetime import datetime
 from uuid import uuid4
 
@@ -10,12 +9,12 @@ def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL;")
-    # Inventory Data Sheet
+    # Inventory table
     conn.execute("""
     CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY,
-        item_no TEXT,
-        part_no TEXT,
+        sku TEXT UNIQUE,
+        name TEXT,
         description TEXT,
         denomination TEXT,
         type TEXT,
@@ -25,157 +24,57 @@ def ensure_db():
         issued_to TEXT,
         balance INTEGER,
         remarks TEXT,
-        created_utc TEXT
-    );
-    """)
-    # Certified Receipt Voucher
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS certified_receipt (
-        id TEXT PRIMARY KEY,
-        set_no TEXT,
-        part_no TEXT,
-        item_desc TEXT,
-        denom_qty TEXT,
-        qty_received INTEGER,
-        received_from TEXT,
-        received_by TEXT,
-        remarks TEXT,
-        created_utc TEXT
-    );
-    """)
-    # Spares Issue Voucher
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS spares_issue (
-        id TEXT PRIMARY KEY,
-        sl_no TEXT,
-        part_no TEXT,
-        description TEXT,
-        lf_no TEXT,
-        item TEXT,
-        qty_issued INTEGER,
-        balance INTEGER,
-        issued_to TEXT,
-        remarks TEXT,
-        created_utc TEXT
-    );
-    """)
-    # Demand on the Supply Office for Naval Stores
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS demand_supply (
-        id TEXT PRIMARY KEY,
-        patt_no TEXT,
-        description TEXT,
-        mand_dept TEXT,
-        lf_no TEXT,
-        qty_req INTEGER,
-        qty_held INTEGER,
-        balance INTEGER,
-        location TEXT,
-        remarks TEXT,
-        created_utc TEXT
-    );
-    """)
-    conn.commit()
-    conn.close()
+        created_utc TEXT,
+        modified_utc TEXT
+    );""")
+    conn.commit(); conn.close()
 
-# Generic helper
-def _insert(table, data: dict):
+def _run(sql, params=(), fetch=False):
     ensure_db()
     conn = sqlite3.connect(DB_PATH, timeout=30)
     cur = conn.cursor()
-    keys = ",".join(data.keys())
-    placeholders = ",".join(["?"]*len(data))
-    sql = f"INSERT INTO {table} ({keys}) VALUES ({placeholders})"
-    cur.execute(sql, list(data.values()))
+    cur.execute(sql, params)
+    rows = None
+    if fetch:
+        rows = cur.fetchall()
     conn.commit()
-    conn.close()
-
-def _select_all(table, order_by="created_utc"):
-    ensure_db()
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    cur = conn.cursor()
-    cur.execute(f"SELECT * FROM {table} ORDER BY {order_by} DESC")
-    rows = cur.fetchall()
     conn.close()
     return rows
 
-# Inventory functions
-def save_inventory(item_no, part_no, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks):
-    data = {
-        "id": str(uuid4()),
-        "item_no": item_no,
-        "part_no": part_no,
-        "description": description,
-        "denomination": denomination,
-        "type": type_,
-        "qty": qty,
-        "location": location,
-        "received_from": received_from,
-        "issued_to": issued_to,
-        "balance": balance,
-        "remarks": remarks,
-        "created_utc": datetime.utcnow().isoformat() + "Z"
-    }
-    _insert("inventory", data)
+# CRUD
+def add_inventory(sku, name, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks):
+    now = datetime.utcnow().isoformat() + "Z"
+    _run("""INSERT INTO inventory (id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks, created_utc, modified_utc)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         (str(uuid4()), sku, name, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks, now, now))
 
 def list_inventory():
-    return _select_all("inventory")
+    return _run("SELECT id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks, created_utc, modified_utc FROM inventory ORDER BY name", fetch=True)
 
-# Certified receipt functions
-def save_certified_receipt(set_no, part_no, item_desc, denom_qty, qty_received, received_from, received_by, remarks):
-    data = {
-        "id": str(uuid4()),
-        "set_no": set_no,
-        "part_no": part_no,
-        "item_desc": item_desc,
-        "denom_qty": denom_qty,
-        "qty_received": qty_received,
-        "received_from": received_from,
-        "received_by": received_by,
-        "remarks": remarks,
-        "created_utc": datetime.utcnow().isoformat() + "Z"
-    }
-    _insert("certified_receipt", data)
+def get_inventory_by_sku(sku):
+    rows = _run("SELECT id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks FROM inventory WHERE sku = ?", (sku,), fetch=True)
+    return rows[0] if rows else None
 
-def list_certified_receipt():
-    return _select_all("certified_receipt")
+def get_inventory_by_id(id_):
+    rows = _run("SELECT id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks FROM inventory WHERE id = ?", (id_,), fetch=True)
+    return rows[0] if rows else None
 
-# Spares issue functions
-def save_spares_issue(sl_no, part_no, description, lf_no, item, qty_issued, balance, issued_to, remarks):
-    data = {
-        "id": str(uuid4()),
-        "sl_no": sl_no,
-        "part_no": part_no,
-        "description": description,
-        "lf_no": lf_no,
-        "item": item,
-        "qty_issued": qty_issued,
-        "balance": balance,
-        "issued_to": issued_to,
-        "remarks": remarks,
-        "created_utc": datetime.utcnow().isoformat() + "Z"
-    }
-    _insert("spares_issue", data)
+def update_inventory(id_, sku, name, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks):
+    now = datetime.utcnow().isoformat() + "Z"
+    _run("""UPDATE inventory SET sku=?, name=?, description=?, denomination=?, type=?, qty=?, location=?, received_from=?, issued_to=?, balance=?, remarks=?, modified_utc=? WHERE id=?""",
+         (sku, name, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks, now, id_))
 
-def list_spares_issue():
-    return _select_all("spares_issue")
+def delete_inventory(id_):
+    _run("DELETE FROM inventory WHERE id = ?", (id_,))
 
-# Demand on supply functions
-def save_demand_supply(patt_no, description, mand_dept, lf_no, qty_req, qty_held, balance, location, remarks):
-    data = {
-        "id": str(uuid4()),
-        "patt_no": patt_no,
-        "description": description,
-        "mand_dept": mand_dept,
-        "lf_no": lf_no,
-        "qty_req": qty_req,
-        "qty_held": qty_held,
-        "balance": balance,
-        "location": location,
-        "remarks": remarks,
-        "created_utc": datetime.utcnow().isoformat() + "Z"
-    }
-    _insert("demand_supply", data)
+# Qty adjustments (for scanner / usage)
+def adjust_qty_by_sku(sku, delta):
+    now = datetime.utcnow().isoformat() + "Z"
+    # safe update
+    _run("UPDATE inventory SET qty = qty + ?, modified_utc = ? WHERE sku = ?", (delta, now, sku))
 
-def list_demand_supply():
-    return _select_all("demand_supply")
+# Search
+def search_inventory(term):
+    t = f"%{term}%"
+    return _run("SELECT id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks, created_utc, modified_utc FROM inventory WHERE sku LIKE ? OR name LIKE ? OR description LIKE ? ORDER BY name",
+                (t, t, t), fetch=True)

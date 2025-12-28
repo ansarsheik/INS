@@ -9,7 +9,7 @@ def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL;")
-    # Inventory table
+    # create inventory table (if missing columns migration will add them)
     conn.execute("""
     CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY,
@@ -27,7 +27,28 @@ def ensure_db():
         created_utc TEXT,
         modified_utc TEXT
     );""")
-    conn.commit(); conn.close()
+    # create transactions table to log in/out
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        sku TEXT,
+        delta INTEGER,
+        tx_type TEXT, -- 'IN' or 'OUT'
+        reason TEXT,
+        source TEXT,  -- 'scanner' or 'manual'
+        created_utc TEXT
+    );""")
+    conn.commit()
+
+    # simple automatic column migrations for older DBs
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(inventory);").fetchall()]
+    if "sku" not in cols:
+        conn.execute("ALTER TABLE inventory ADD COLUMN sku TEXT;")
+    if "modified_utc" not in cols:
+        conn.execute("ALTER TABLE inventory ADD COLUMN modified_utc TEXT;")
+    # ensure transactions table exists (already created above)
+    conn.commit()
+    conn.close()
 
 def _run(sql, params=(), fetch=False):
     ensure_db()
@@ -41,7 +62,7 @@ def _run(sql, params=(), fetch=False):
     conn.close()
     return rows
 
-# CRUD
+# Inventory CRUD & helpers
 def add_inventory(sku, name, description, denomination, type_, qty, location, received_from, issued_to, balance, remarks):
     now = datetime.utcnow().isoformat() + "Z"
     _run("""INSERT INTO inventory (id, sku, name, description, denomination, type, qty, location, received_from, issued_to, balance, remarks, created_utc, modified_utc)
@@ -67,11 +88,23 @@ def update_inventory(id_, sku, name, description, denomination, type_, qty, loca
 def delete_inventory(id_):
     _run("DELETE FROM inventory WHERE id = ?", (id_,))
 
-# Qty adjustments (for scanner / usage)
-def adjust_qty_by_sku(sku, delta):
+# Transactions log
+def log_transaction(sku, delta, tx_type, reason="", source="manual"):
     now = datetime.utcnow().isoformat() + "Z"
-    # safe update
-    _run("UPDATE inventory SET qty = qty + ?, modified_utc = ? WHERE sku = ?", (delta, now, sku))
+    _run("INSERT INTO transactions (id, sku, delta, tx_type, reason, source, created_utc) VALUES (?,?,?,?,?,?,?)",
+         (str(uuid4()), sku, delta, tx_type, reason, source, now))
+
+def list_transactions(limit=1000):
+    return _run("SELECT id, sku, delta, tx_type, reason, source, created_utc FROM transactions ORDER BY created_utc DESC LIMIT ?", (limit,), fetch=True)
+
+# Qty adjustments (for scanner / usage)
+def adjust_qty_by_sku(sku, delta, reason="", source="manual"):
+    # apply change and log it atomically (two statements)
+    now = datetime.utcnow().isoformat() + "Z"
+    # Ensure SKU exists; if not, create placeholder? for safety we error out in calling code
+    _run("UPDATE inventory SET qty = COALESCE(qty,0) + ?, modified_utc = ? WHERE sku = ?", (delta, now, sku))
+    tx_type = "IN" if delta > 0 else "OUT"
+    log_transaction(sku, delta, tx_type, reason=reason, source=source)
 
 # Search
 def search_inventory(term):

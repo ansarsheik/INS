@@ -1,6 +1,6 @@
 # backup.py
 import shutil, os, datetime
-DB_PATH = r"C:\ProgramData\MyWarehouse\app.db"
+DB_PATH = r"C:\ProgramData\MyWarehouse\forms.db"
 BACKUP_DIR = r"C:\ProgramData\MyWarehouse\backups"
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
@@ -18,7 +18,3 @@ def backup_db(keep_days=30):
             age = (datetime.datetime.utcnow() - datetime.datetime.utcfromtimestamp(os.path.getmtime(fp))).days
             if age > keep_days:
                 os.remove(fp)
-
-if __name__ == "__main__":
-    backup_db()
-    print("Backup complete.")

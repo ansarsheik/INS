@@ -1,4 +1,4 @@
-.venv
+./.venv
 __pycache__
 *.pyc
 .DS_Store
@@ -16,4 +16,4 @@ coverage/
 htmlcov/
 .tox/
 .pytest_cache/
-.mypy_cache/    
+.mypy_cache/

@@ -5,10 +5,14 @@ from reportlab.graphics.barcode import code128
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 
+# for image barcodes preview
+from barcode import Code128
+from barcode.writer import ImageWriter
+
 TMP = tempfile.gettempdir()
 
+# Inventory sheet (unchanged)
 def create_inventory_sheet_pdf(record, out_path=None):
-    """Create printable form (Inventory Data Sheet) for a single record."""
     if out_path is None:
         out_path = os.path.join(TMP, f"inventory_sheet_{record[1]}.pdf")
     c = canvas.Canvas(out_path, pagesize=A4)
@@ -29,8 +33,8 @@ def create_inventory_sheet_pdf(record, out_path=None):
     c.showPage(); c.save()
     return out_path
 
+# label PDF (one page per label)
 def create_labels_pdf(sku, name, qty, out_path=None, label_w_mm=70, label_h_mm=30):
-    """Create one page per label, qty pages each with identical barcode and name."""
     if out_path is None:
         out_path = os.path.join(TMP, f"labels_{sku}_{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.pdf")
     c = canvas.Canvas(out_path, pagesize=(label_w_mm*mm, label_h_mm*mm))
@@ -75,20 +79,87 @@ def create_inventory_report_pdf(rows, out_path=None, title="Inventory Report"):
     return out_path
 
 # ---------------------------
-# Printing helpers
+# New: PDF builders for other forms
+# ---------------------------
+def create_certified_receipt_pdf(record, out_path=None):
+    # record: (id,set_no,part_no,item_desc,denom_qty,qty_received,received_from,received_by,remarks,created_utc)
+    if out_path is None:
+        out_path = os.path.join(TMP, f"certified_receipt_{record[1] or 'rec'}.pdf")
+    c = canvas.Canvas(out_path, pagesize=A4)
+    w, h = A4; margin = 20*mm
+    c.setFont("Helvetica-Bold", 16); c.drawString(margin, h - margin, "Certified Receipt Voucher")
+    y = h - margin - 30
+    labels = ["Set No:", "Part No:", "Item Description:", "Denomination/Qty:", "Qty Received:", "Received From:", "Received By:", "Remarks:"]
+    vals = [record[1] or "", record[2] or "", record[3] or "", record[4] or "", str(record[5] or ""), record[6] or "", record[7] or "", record[8] or ""]
+    c.setFont("Helvetica", 11)
+    for lab, val in zip(labels, vals):
+        c.drawString(margin, y, lab); c.drawString(margin+120, y, val); y -= 16
+    c.showPage(); c.save(); return out_path
+
+def create_spares_issue_pdf(record, out_path=None):
+    # record: (id,sl_no,part_no,description,lf_no,item,qty_issued,balance,issued_to,remarks,created_utc)
+    if out_path is None:
+        out_path = os.path.join(TMP, f"spares_issue_{record[1] or 'si'}.pdf")
+    c = canvas.Canvas(out_path, pagesize=A4)
+    w, h = A4; margin = 20*mm
+    c.setFont("Helvetica-Bold", 16); c.drawString(margin, h - margin, "Spares Issue Voucher")
+    y = h - margin - 30
+    labels = ["SL No:", "Part No:", "Description:", "LF No:", "Item:", "Qty Issued:", "Balance:", "Issued To:", "Remarks:"]
+    vals = [record[1] or "", record[2] or "", record[3] or "", record[4] or "", record[5] or "", str(record[6] or ""), str(record[7] or ""), record[8] or "", record[9] or ""]
+    c.setFont("Helvetica", 11)
+    for lab, val in zip(labels, vals):
+        c.drawString(margin, y, lab); c.drawString(margin+120, y, val); y -= 16
+    c.showPage(); c.save(); return out_path
+
+def create_demand_supply_pdf(record, out_path=None):
+    # record: (id,patt_no,description,mand_dept,lf_no,qty_req,qty_held,balance,location,remarks,created_utc)
+    if out_path is None:
+        out_path = os.path.join(TMP, f"demand_supply_{record[1] or 'ds'}.pdf")
+    c = canvas.Canvas(out_path, pagesize=A4)
+    w, h = A4; margin = 20*mm
+    c.setFont("Helvetica-Bold", 16); c.drawString(margin, h - margin, "Demand on the Supply Office for Naval Stores")
+    y = h - margin - 30
+    labels = ["Pattern No:", "Description:", "Mand/Dept:", "LF No:", "Qty Required:", "Qty Held:", "Balance:", "Location:", "Remarks:"]
+    vals = [record[1] or "", record[2] or "", record[3] or "", record[4] or "", str(record[5] or ""), str(record[6] or ""), str(record[7] or ""), record[8] or "", record[9] or ""]
+    c.setFont("Helvetica", 11)
+    for lab, val in zip(labels, vals):
+        c.drawString(margin, y, lab); c.drawString(margin+160, y, val); y -= 16
+    c.showPage(); c.save(); return out_path
+
+# ---------------------------
+# Barcode image generation (preview)
+# ---------------------------
+def generate_barcode_images(sku, name, count, out_dir=None):
+    """
+    Generates PNG barcode images using python-barcode (ImageWriter) and returns
+    a list of file paths (one per label).
+    """
+    if out_dir is None:
+        out_dir = os.path.join(TMP, f"barcode_preview_{sku}_{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S')}")
+    os.makedirs(out_dir, exist_ok=True)
+    paths = []
+    # Use Code128 writer
+    for i in range(max(1, int(count))):
+        base = os.path.join(out_dir, f"{sku}_{i+1}")
+        # Code128 via python-barcode
+        code = Code128(sku, writer=ImageWriter())
+        fname = code.save(base)  # returns path with .png
+        paths.append(fname)
+    return paths
+
+# ---------------------------
+# Printing helpers (unchanged)
 # ---------------------------
 def enum_printers():
     try:
         import win32print
         flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
         printers = win32print.EnumPrinters(flags)
-        # printers: tuple of (flags, description, name, comment) — return name
         return [p[2] for p in printers]
     except Exception:
         return []
 
 def print_pdf_shell(path):
-    """Fallback: open default PDF viewer print action (may show dialog depending on viewer)."""
     try:
         import win32api
         win32api.ShellExecute(0, "print", path, None, ".", 0)
